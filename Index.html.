@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>JINKS AI | Cinematic Engine</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        :root { --jinks: #bf00ff; --cyan: #00e5ff; --bg: #050505; --card: #121214; }
+        body { background: var(--bg); color: white; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; overflow: hidden; }
+        
+        /* Premium UI/UX */
+        .container { width: 90%; max-width: 400px; background: var(--card); padding: 30px; border-radius: 28px; border: 1px solid rgba(191, 0, 255, 0.2); text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.7); position: relative; }
+        .logo { font-size: 32px; font-weight: 900; background: linear-gradient(45deg, var(--jinks), var(--cyan)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -1.5px; margin-bottom: 25px; text-transform: uppercase; }
+        
+        input, textarea { width: 100%; background: #000; border: 1px solid #222; color: white; padding: 16px; border-radius: 14px; margin-bottom: 12px; font-size: 16px; box-sizing: border-box; outline: none; transition: 0.3s; }
+        input:focus { border-color: var(--jinks); box-shadow: 0 0 10px rgba(191, 0, 255, 0.2); }
+        
+        button { width: 100%; padding: 18px; background: linear-gradient(45deg, var(--jinks), var(--cyan)); border: none; border-radius: 14px; color: black; font-weight: 800; font-size: 16px; margin-top: 10px; cursor: pointer; transition: 0.2s; }
+        button:active { transform: scale(0.96); }
+        button:disabled { opacity: 0.4; filter: grayscale(1); cursor: not-allowed; }
+
+        #auth-ui, #gen-ui { display: none; }
+        .status { font-size: 13px; color: #888; margin-top: 15px; min-height: 40px; }
+        video { width: 100%; border-radius: 16px; margin-top: 20px; border: 1px solid var(--jinks); display: none; background: #000; }
+        
+        .badge { display: inline-block; padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 900; margin-bottom: 15px; letter-spacing: 1px; }
+        .free { background: #222; color: #888; border: 1px solid #333; }
+        .pro { background: var(--jinks); color: white; box-shadow: 0 0 15px var(--jinks); }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="logo">JINKS AI</div>
+
+        <div id="auth-ui">
+            <input type="email" id="email" placeholder="Email Address">
+            <input type="password" id="password" placeholder="Password">
+            <button onclick="handleAuth('in')">Enter Jinks</button>
+            <p style="font-size: 12px; color: #555; margin-top: 15px; cursor: pointer;" onclick="handleAuth('up')">New user? Create Account</p>
+        </div>
+
+        <div id="gen-ui">
+            <div id="planBadge" class="badge">Checking Engine...</div>
+            <textarea id="promptInput" rows="3" placeholder="Describe a cinematic scene (e.g., A futuristic car racing through Lagos at night)"></textarea>
+            <button id="genBtn" onclick="generateVideo()">Start Rendering</button>
+            <div id="status" class="status">Ready to create.</div>
+            <video id="outputVideo" controls autoplay loop></video>
+            <button style="background:none; color:#444; font-size:12px; margin-top:25px; border: 1px solid #222;" onclick="logout()">Sign Out</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import { Client } from "https://cdn.jsdelivr.net/npm/@gradio/client/dist/index.min.js";
+
+        // 🟢 AUTHENTICATED CONFIGURATION
+        const SB_URL = "https://swezwbvajvkujaunmndh.supabase.co";
+        const SB_KEY = "sb_publishable_GA_rDMQMcFZ1gYqXdGxMZw_7fsok6SY";
+        const HF_TOKEN = "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";
+
+        const sb = supabase.createClient(SB_URL, SB_KEY);
+
+        // AUTHENTICATION LOGIC
+        window.handleAuth = async (mode) => {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            if(!email || !password) return alert("Fill in your details!");
+
+            const { error } = (mode === 'in') 
+                ? await sb.auth.signInWithPassword({ email, password }) 
+                : await sb.auth.signUp({ email, password });
+
+            if (error) alert(error.message);
+            else location.reload();
+        };
+
+        window.logout = async () => {
+            await sb.auth.signOut();
+            location.reload();
+        };
+
+        // UI INITIALIZATION
+        async function init() {
+            const { data: { user } } = await sb.auth.getUser();
+            if (user) {
+                document.getElementById('auth-ui').style.display = 'none';
+                document.getElementById('gen-ui').style.display = 'block';
+                
+                // Fetch profile to check for Premium status
+                const { data: profile } = await sb.from('profiles').select('*').eq('id', user.id).single();
+                const badge = document.getElementById('planBadge');
+                
+                if (profile?.is_premium) {
+                    badge.innerText = "PRO ENGINE ACTIVE";
+                    badge.className = "badge pro";
+                    window.isPro = true;
+                } else {
+                    badge.innerText = "FREE LITE ENGINE";
+                    badge.className = "badge free";
+                    window.isPro = false;
+                }
+            } else {
+                document.getElementById('auth-ui').style.display = 'block';
+            }
+        }
+        init();
+
+        // VIDEO GENERATION ENGINE
+        window.generateVideo = async () => {
+            const prompt = document.getElementById('promptInput').value;
+            const btn = document.getElementById('genBtn');
+            const status = document.getElementById('status');
+            const video = document.getElementById('outputVideo');
+
+            if (!prompt) return alert("Abeg, give Jinks a prompt!");
+
+            btn.disabled = true;
+            status.innerText = "Jinks is rewriting your prompt for 4K quality...";
+
+            try {
+                // Auto-Enhancement for better results
+                const enhancedPrompt = prompt + ", cinematic cinematography, high resolution, 4k, hyper-realistic, detailed lighting";
+                
+                // Model Selection: 14B for Pro, 1.3B for Free
+                const model = window.isPro ? "Wan-AI/Wan2.1-T2V-14B" : "Wan-AI/Wan2.1-T2V-1.3B";
+                
+                status.innerText = `Connecting to ${window.isPro ? '14B Pro' : '1.3B Lite'} GPU...`;
+                const client = await Client.connect(model, { token: HF_TOKEN });
+                
+                status.innerText = "Rendering Cinema... (Approx 60-90s)";
+                const result = await client.predict("/predict", { 
+                    prompt: enhancedPrompt,
+                    resolution: "480P" 
+                });
+
+                if (result.data && result.data[0]) {
+                    video.src = result.data[0].url;
+                    video.style.display = "block";
+                    status.innerText = "Render Successful!";
+                }
+            } catch (err) {
+                status.innerText = "Server is busy or Token expired. Try again in 1 minute.";
+                console.error(err);
+            }
+            btn.disabled = false;
+        };
+    </script>
+</body>
+</html>
